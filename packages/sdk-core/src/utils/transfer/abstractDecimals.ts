@@ -16,6 +16,20 @@ export const abstractDecimals = <TApi, TRes, TSigner, TCustomChain extends strin
   return applyDecimalAbstraction(amount, decimals, abstractDecimals)
 }
 
+/**
+ * Counts the fractional digits that carry information, so that trailing zeros
+ * are not mistaken for excess precision. `1.500` at 2 decimals is exactly
+ * representable and must not be rejected.
+ */
+const significantFractionDigits = (strAmount: string): string => {
+  const dotIndex = strAmount.indexOf('.')
+  if (dotIndex === -1) {
+    return ''
+  }
+
+  return strAmount.slice(dotIndex + 1).replace(/0+$/, '')
+}
+
 export const applyDecimalAbstraction = (
   amount: TAmount,
   decimals: number | undefined,
@@ -43,5 +57,20 @@ export const applyDecimalAbstraction = (
     return BigInt(strAmount)
   }
 
-  return parseUnits(amount.toString(), decimals)
+  // parseUnits (viem) rounds excess fractional digits to the nearest
+  // representable value instead of rejecting them, so an amount the asset
+  // cannot represent exactly would silently reach the chain as a different
+  // amount. Reject it here, matching the contract the non-abstracted branch
+  // above already enforces for fractional input.
+  const strAmount = amount.toString()
+  const fraction = significantFractionDigits(strAmount)
+  if (fraction.length > decimals) {
+    throw new NumberFormatError(
+      `Amount ${strAmount} has more precision than the asset supports: ` +
+        `${decimals} decimal${decimals === 1 ? '' : 's'}. ` +
+        'The amount cannot be represented exactly and would be rounded.'
+    )
+  }
+
+  return parseUnits(strAmount, decimals)
 }
